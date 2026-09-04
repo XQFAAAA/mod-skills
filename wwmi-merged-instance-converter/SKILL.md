@@ -62,7 +62,7 @@ global $merge_status_id_0 = 0
 global $merge_status_id_7 = 0
 ```
 
-新版：**移除**逐实例 `$merge_status_id_{C}_{N}` 变量，改为每组件一个池（按 `$instance_id` 索引）：
+新版：**移除**上述 `$merge_status_id_{C}` 变量，改为每组件一个池（按 `$instance_id` 索引）：
 ```
 [PoolMergeStatus_0]
 pool_size = 4
@@ -82,8 +82,27 @@ pool_variable_default_value = 0
 global $merge_status_id = 0
 ```
 
+**重要 — [Constants] 内变量顺序**：`global persist $draw_*` 开关块（`; Swap vars aka toggles defaults` / `; Per-object state vars` 注释 + 各 `global persist $draw_component{C} = 1`）**必须保留在原位**（紧跟在 `global $merge_status_id = 0` 之后），新加的 `$instance_id` / `$instance_id_{0..N-1}` 与 `[PoolMergeStatus_{C}]` 池统一插在开关块**之后**。参考（Test 对象）顺序：
+```
+global $merge_status_id = 0
+; Swap vars aka toggles defaults
+; Per-object state vars
+global persist $draw_component0 = 1
+...
+global persist $draw_component7 = 1
+global $instance_id = 0
+global $instance_id_0 = 0
+global $instance_id_1 = 0
+global $instance_id_2 = 0
+global $instance_id_3 = 0
+[PoolMergeStatus_0]
+...
+[PoolMergeStatus_7]
+```
+
 ### 2. Constants：新增通用实例 ID 变量
 
+插入位置：`[Constants]` 内 `global persist $draw_*` 开关块**之后**、`[PoolMergeStatus_{C}]` 池**之前**（见第 1 项的顺序说明）。
 ```
 global $instance_id = 0        ; 当前绘制的实例 ID（通用）
 global $instance_id_0 = 0      ; 每实例一个
@@ -219,6 +238,8 @@ if $PoolMergeStatus_{C}[$instance_id] != 2
 endif
 ```
 
+各组件内原有的 `$draw_component{C}` 开关判断、drawindexed 调用、纹理替换与特效（如 RabbitFX）逻辑**保持不变**，仅替换骨架合并部分与绘制判断条件。
+
 ### 10. 资源池声明（随实例数增加）
 
 ```
@@ -269,6 +290,7 @@ array = 1536
 ### 12. 删除压缩骨骼相关代码
 
 因为索引/权重已突破 1 字节（256 个）限制，取消压缩骨骼索引和压缩骨骼矩阵的代码：
+- `[Present]` 中删除 `run = CommandListInitializeBlendRemaps`，**保留** `run = CommandListProcessToggles` 与 `run = CommandListUpdateMergedSkeleton`（`[CommandListProcessToggles]` 节本身保持不变）
 - 注释/删除 `CommandListInitializeBlendRemaps`（blend remap 初始化）
 - 注释/删除 `CommandListRemapMergedSkeleton`（SkeletonRemapper 骨骼重映射）
 - 删除 `ResourceBlendBufferNoStride`、`ResourceRemappedBlendBufferRW`、`ResourceRemappedSkeletonRW`、`ResourceExtraRemappedSkeletonRW` 等重映射资源
@@ -356,6 +378,7 @@ with open('Blend_R16.buf', 'r+b') as f:
 ## 三、检查清单
 
 - [ ] Constants 中存在 `[PoolMergeStatus_{C}]` 池（每组件一个，`pool_size = 实例数`，`pool_variable_default_value = 0`），且无逐实例 `$merge_status_id_{C}_{N}` 变量
+- [ ] `[Constants]` 中 `global persist $draw_*` 开关块保留在原位（`$merge_status_id` 之后、`$instance_id`/池之前），`[Present]` 保留 `run = CommandListProcessToggles`
 - [ ] 存在通用 `$instance_id` 变量 + 每实例 `$instance_id_{0..N-1}` 变量
 - [ ] 存在 `[TextureOverrideMeshDataCB]`（hash = 358d62cb，filter_index = 3380.7777）
 - [ ] 每个 `TextureOverrideComponent{C}` 都有 `$instance_id` 捕获块（vs-cb2/vs-cb3 == 3380.7777）

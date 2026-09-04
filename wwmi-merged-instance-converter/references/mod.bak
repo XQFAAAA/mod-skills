@@ -1,4 +1,4 @@
-namespace = Mods\1a00aa08ea00419faa223e72a880281c
+namespace = Mods\1be4c29ac37a4e88906720c8d76423a8
 ; WWMI BETA-8 INI
 
 ; Mod State -------------------------
@@ -23,12 +23,23 @@ global $merge_status_id_4 = 0
 global $merge_status_id_5 = 0
 global $merge_status_id_6 = 0
 global $merge_status_id_7 = 0
+; Swap vars aka toggles defaults
+; Per-object state vars
+global persist $draw_component0 = 1
+global persist $draw_component1 = 1
+global persist $draw_component2 = 1
+global persist $draw_component3 = 1
+global persist $draw_component4 = 1
+global persist $draw_component5 = 1
+global persist $draw_component6 = 1
+global persist $draw_component7 = 1
 
 [Present]
 if $object_detected
     if $mod_enabled
         post $object_detected = 0
         run = CommandListInitializeBlendRemaps
+        run = CommandListProcessToggles
         run = CommandListUpdateMergedSkeleton
     else
         if $mod_id == -1000
@@ -50,6 +61,9 @@ $mod_id = $\WWMIv1\mod_id
 if $mod_id >= 0
     $mod_enabled = 1
 endif
+
+[CommandListProcessToggles]
+; Set display of each object according to toggles logic
 
 [CommandListUpdateMergedSkeleton]
 $merge_status_id_0 = 0
@@ -280,7 +294,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 0
-		drawindexed = 13860, 0, 0
+        if $draw_component0
+			drawindexed = 13860, 0, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -303,7 +319,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 1
-		drawindexed = 59466, 13860, 0
+        if $draw_component1
+			drawindexed = 59466, 13860, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -326,7 +344,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 2
-		drawindexed = 12084, 73326, 0
+        if $draw_component2
+			drawindexed = 12084, 73326, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -349,7 +369,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 3
-		drawindexed = 74298, 85410, 0
+        if $draw_component3
+			drawindexed = 74298, 85410, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -375,7 +397,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 4
-		drawindexed = 112440, 159708, 0
+        if $draw_component4
+			drawindexed = 112440, 159708, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -401,7 +425,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 5
-		drawindexed = 19578, 272148, 0
+        if $draw_component5
+			drawindexed = 19578, 272148, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -424,7 +450,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 6
-		drawindexed = 1464, 291726, 0
+        if $draw_component6
+			drawindexed = 1464, 291726, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -450,7 +478,9 @@ if $mod_enabled
         ; run = CommandListTriggerResourceOverrides
         run = CommandListOverrideSharedResources
         ; Draw Component 7
-		drawindexed = 4800, 293190, 0
+        if $draw_component7
+			drawindexed = 4800, 293190, 0
+        endif
         run = CommandListCleanupSharedResources
     endif
 endif
@@ -629,4 +659,4 @@ filename = Meshes/ShapeKeyVertexOffset.buf
 ; WWMI Tools GameBanana: https://gamebanana.com/tools/17289
 ; WWMI Tools GitHub: https://github.com/SpectrumQT/WWMI-Tools
 ; AGMG Modding Community Discord: https://discord.com/invite/agmg
-; SHA256 CHECKSUM: dc7b911dd4b3d59dd5533c00a897729ca337d1be002a634badf82ab01a899e88
+; SHA256 CHECKSUM: 6cc04129bcfc0e6d0fa157d60639c0efdaf046384c5119e7b3b1a55d2f9ef1e1
