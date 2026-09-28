@@ -1,6 +1,6 @@
 ---
-name: "wwmi-merged-instance-converter"
-description: "将 WWMI 旧版 Merged 骨架 mod 升级为 Merged Instance 多实例新版 mod（含 13 项 ini 变更，基于 $instance_id + PoolMergeStatus 池 + TextureOverrideMeshDataCB 方案），并按 BlendBufferrR8-R16.py 由 Blend.buf + BlendRemapVertexVG.buf 生成 Blend_R16.buf。当需要把旧版 mod 转成支持同屏多实例/16 位骨骼索引的新版 mod 时使用。"
+name: wwmi-merged-instance-converter
+description: 将 WWMI 旧版 Merged 骨架 mod 升级为 Merged Instance 多实例新版 mod（含 13 项 ini 变更，基于 $instance_id + PoolInstanceID 池 + PoolMergeStatus 池 + TextureOverrideMeshDataCB 方案，RW 骨架池带 pool_allocate_slot_on_missing 与资源模板），并按 BlendBufferrR8-R16.py 由 Blend.buf + BlendRemapVertexVG.buf 生成 Blend_R16.buf。当需要把旧版 mod 转成支持同屏多实例/16 位骨骼索引的新版 mod 时使用。
 ---
 
 # WWMI Merged Instance 转换指南
@@ -22,6 +22,8 @@ description: "将 WWMI 旧版 Merged 骨架 mod 升级为 Merged Instance 多实
 - 旧版 mod.ini 使用单份骨架缓冲 `ResourceMergedSkeleton` / `ResourceExtraMergedSkeleton`，同屏出现多个同对象实例时会互相覆盖。
 - 新版通过 **Pool（资源池）+ `$instance_id`（实例 ID）** 为每个实例分配独立骨架合并槽位，并改用 16 位 blend 数据（`Blend_R16.buf`）支持超过 256 的 VG/骨骼索引。
 - 实例 ID 的获取：`[TextureOverrideMeshDataCB]`（通用 hash `358d62cb`）把 MeshDataCB 标记为 `3380.7777`；在每个组件绘制处理开头，从 vs-cb2/vs-cb3（若等于 3380.7777）把 `@vs-cb2`/`@vs-cb3`（当前绑定 CB 的地址，不同实例不同）写入通用变量 `$instance_id`。
+- 实例 ID 的存储：每个实例首次合并时把 `$instance_id` 注册进 **`[PoolInstanceID]` 池**（`$PoolInstanceID[槽位号] = $instance_id`），帧末按 `$PoolInstanceID[0..N-1]` 遍历各实例传递骨骼矩阵，不再使用逐实例 `$instance_id_{N}` 变量。
+- RW 骨架池 `[PoolMergedSkeletonRW]` / `[PoolExtraMergedSkeletonRW]` 带 **`pool_allocate_slot_on_missing = 1` 与资源模板**（`type`/`format`/`array`/`bind_flags`）：访问缺失槽位时自动分配槽位并按模板创建 RWBuffer，命令列表无需手动初始化槽位、无需逐实例 RWBuffer 资源引用。
 - 合并状态不再按实例展开成 N 个变量，而是每组件一个 **`PoolMergeStatus_{C}` 池**（按 `$instance_id` 索引），配合 `pool_variable_default_value = 0`，天然支持任意实例数。
 
 ## 变量约定
@@ -29,7 +31,7 @@ description: "将 WWMI 旧版 Merged 骨架 mod 升级为 Merged Instance 多实
 - `N`：实例数量，实例编号 `0 .. N-1`（Test 参考中 N=4）
 - `C`：组件数量，组件编号 `0 .. C-1`（Test 参考中 C=8）
 - `$instance_id`：当前绘制调用的实例 ID（通用变量，从标记的 MeshDataCB 捕获，供 CommandListMergeSkeleton / OverrideSharedResources / PoolMergeStatus 索引使用）
-- `$instance_id_{N}`：第 N 个实例的实例 ID（在帧末用于选择该实例的 Pool 槽位）
+- `$PoolInstanceID[S]`：`[PoolInstanceID]` 池的第 S 号槽位，存放注册到骨架池槽位 S 的实例 ID（首次合并 Regular 段写入；帧末用 `$PoolInstanceID[0..N-1]` 选择各实例的 Pool 槽位）
 - `$PoolMergeStatus_{C}[$instance_id]`：组件 C 在当前实例的骨架合并状态（0=未合并 / 1=仅常规 / 2=常规+特殊）
 - `$merge_status_id`：通用输入/输出变量，供 CommandListMergeSkeleton 使用
 
@@ -82,7 +84,7 @@ pool_variable_default_value = 0
 global $merge_status_id = 0
 ```
 
-**重要 — [Constants] 内变量顺序**：`global persist $draw_*` 开关块（`; Swap vars aka toggles defaults` / `; Per-object state vars` 注释 + 各 `global persist $draw_component{C} = 1`）**必须保留在原位**（紧跟在 `global $merge_status_id = 0` 之后），新加的 `$instance_id` / `$instance_id_{0..N-1}` 与 `[PoolMergeStatus_{C}]` 池统一插在开关块**之后**。参考（Test 对象）顺序：
+**重要 — [Constants] 内变量顺序**：`global persist $draw_*` 开关块（`; Swap vars aka toggles defaults` / `; Per-object state vars` 注释 + 各 `global persist $draw_component{C} = 1`）**必须保留在原位**（紧跟在 `global $merge_status_id = 0` 之后），新加的 `$instance_id`、`[PoolInstanceID]` 池与 `[PoolMergeStatus_{C}]` 池统一插在开关块**之后**。参考（Test 对象）顺序：
 ```
 global $merge_status_id = 0
 ; Swap vars aka toggles defaults
@@ -91,24 +93,29 @@ global persist $draw_component0 = 1
 ...
 global persist $draw_component7 = 1
 global $instance_id = 0
-global $instance_id_0 = 0
-global $instance_id_1 = 0
-global $instance_id_2 = 0
-global $instance_id_3 = 0
+
+[PoolInstanceID]
+pool_size = 4
+pool_index_type = fifo
+pool_variable_default_value = 0
+
 [PoolMergeStatus_0]
 ...
 [PoolMergeStatus_7]
 ```
 
-### 2. Constants：新增通用实例 ID 变量
+### 2. Constants：新增通用实例 ID 变量与 [PoolInstanceID] 池
 
 插入位置：`[Constants]` 内 `global persist $draw_*` 开关块**之后**、`[PoolMergeStatus_{C}]` 池**之前**（见第 1 项的顺序说明）。
 ```
-global $instance_id = 0        ; 当前绘制的实例 ID（通用）
-global $instance_id_0 = 0      ; 每实例一个
-global $instance_id_1 = 0
-...
+global $instance_id = 0
+
+[PoolInstanceID]
+pool_size = 4
+pool_index_type = fifo
+pool_variable_default_value = 0
 ```
+（`$instance_id` 为当前绘制实例 ID；`[PoolInstanceID]` 池按骨架池槽位号存储各实例 ID，`pool_size` = 实例数 N。**不再需要**逐实例 `$instance_id_{0..N-1}` 变量。）
 
 ### 3. 新增 [TextureOverrideMeshDataCB] 标记
 
@@ -152,47 +159,50 @@ ResourceMergedSkeleton = copy ResourceMergedSkeletonRW
 ResourceExtraMergedSkeleton = copy ResourceExtraMergedSkeletonRW
 ```
 
-新版（基底 copy 保留；先全部 Merged、再全部 Extra）：
+新版（基底 copy 保留；先全部 Merged、再全部 Extra；索引一律用 `$PoolInstanceID[N]`，N = 0 .. 实例数-1）：
 ```
 ResourceMergedSkeleton = copy ResourceMergedSkeletonRW
 ResourceExtraMergedSkeleton = copy ResourceExtraMergedSkeletonRW
-PoolMergedSkeleton[$instance_id_0] = copy PoolMergedSkeletonRW[$instance_id_0]
-PoolMergedSkeleton[$instance_id_1] = copy PoolMergedSkeletonRW[$instance_id_1]
+PoolMergedSkeleton[$PoolInstanceID[0]] = copy PoolMergedSkeletonRW[$PoolInstanceID[0]]
+PoolMergedSkeleton[$PoolInstanceID[1]] = copy PoolMergedSkeletonRW[$PoolInstanceID[1]]
 ...
-PoolExtraMergedSkeleton[$instance_id_0] = copy PoolExtraMergedSkeletonRW[$instance_id_0]
-PoolExtraMergedSkeleton[$instance_id_1] = copy PoolExtraMergedSkeletonRW[$instance_id_1]
+PoolExtraMergedSkeleton[$PoolInstanceID[0]] = copy PoolExtraMergedSkeletonRW[$PoolInstanceID[0]]
+PoolExtraMergedSkeleton[$PoolInstanceID[1]] = copy PoolExtraMergedSkeletonRW[$PoolInstanceID[1]]
 ...
 ```
 
-### 7. CommandListMergeSkeleton：按 $instance_id 区分实例
+### 7. CommandListMergeSkeleton：槽位自动分配，无逐实例分支
 
 旧版直接写入单一 `ResourceMergedSkeletonRW` / `ResourceExtraMergedSkeletonRW`。
 
-新版先初始化 pool 槽位，再按实例号选择输出缓冲（Regular 骨架部分）：
+新版 RW 骨架池带 `pool_allocate_slot_on_missing = 1` 与资源模板（见第 10 项），访问缺失槽位时自动分配槽位并按模板创建 RWBuffer，因此**无需** `#Pool...RW[$instance_id] == -1` 初始化块，也**无需**按槽位号 0..N-1 展开的 if/elif 分支和 `ResourceMergedSkeletonRW{N}` 逐实例缓冲引用（Regular 骨架部分）：
 ```
 if $merge_status_id == 0
-	if vs-cb4 == 3381.7777
-		cs-cb8 = ref vs-cb4
-        if #PoolMergedSkeletonRW[$instance_id] == -1
-            PoolMergedSkeletonRW[$instance_id] = copy ResourceMergedSkeletonRW
-        endif
-        if #PoolMergedSkeletonRW[$instance_id] == 0
-            $instance_id_0 = $instance_id
-            cs-u6 = ResourceMergedSkeletonRW0
-            $\WWMIv1\custom_mesh_scale = 1.00
-            run = CustomShader\WWMIv1\SkeletonMerger
-            PoolMergedSkeletonRW[$instance_id] = ref ResourceMergedSkeletonRW0
-        elif #PoolMergedSkeletonRW[$instance_id] == 1
-            $instance_id_1 = $instance_id
-            cs-u6 = ResourceMergedSkeletonRW1
-            ...
-        ...
-        endif
-		$merge_status_id = 1
-	endif
+    if vs-cb4 == 3381.7777
+        cs-cb8 = ref vs-cb4
+        $PoolInstanceID[#PoolMergedSkeletonRW[$instance_id]] = $instance_id
+        cs-u6 = PoolMergedSkeletonRW[$instance_id]
+        $\WWMIv1\custom_mesh_scale = 1.00
+        run = CustomShader\WWMIv1\SkeletonMerger
+        $merge_status_id = 1
+    endif
 endif
 ```
-Special（Extra）骨架部分同理：用 `PoolExtraMergedSkeletonRW[$instance_id]` 与 `ResourceExtraMergedSkeletonRW{N}`，判定条件 `vs-cb4 == 3381.7777 && vs-cb3 == 3381.7777`。
+- `#PoolMergedSkeletonRW[$instance_id]` 返回该实例在 RW 池中分配到的槽位号；用它作下标把 `$instance_id` 注册进 `[PoolInstanceID]` 池（仅在 Regular 段注册一次，Extra 段不注册）。
+- `cs-u6 = PoolMergedSkeletonRW[$instance_id]` 直接把该实例的池槽位 RWBuffer 交给 SkeletonMerger。
+
+Special（Extra）骨架部分同理，但不重复注册 PoolInstanceID，判定条件 `vs-cb4 == 3381.7777 && vs-cb3 == 3381.7777`：
+```
+if $merge_status_id == 1
+    if vs-cb4 == 3381.7777 && vs-cb3 == 3381.7777
+        cs-cb8 = ref vs-cb3
+        cs-u6 = PoolExtraMergedSkeletonRW[$instance_id]
+        $\WWMIv1\custom_mesh_scale = 1.00
+        run = CustomShader\WWMIv1\SkeletonMerger
+        $merge_status_id = 2
+    endif
+endif
+```
 
 ### 8. CommandListOverrideSharedResources：vb4 改 16 位 + 按实例绑定骨架
 
@@ -221,13 +231,7 @@ endif
 
 ### 9. TextureOverrideComponent{C}：每个实例只进一次合并
 
-在捕获 `$instance_id`（见第 4 项）之后，先初始化 pool 槽位：
-```
-if #PoolMergedSkeletonRW[$instance_id] == -1
-    PoolMergedSkeletonRW[$instance_id] = copy ResourceMergedSkeletonRW
-endif
-```
-再用单个合并状态块（无需逐实例枚举）：
+在捕获 `$instance_id`（见第 4 项）之后，直接使用单个合并状态块（槽位由 `pool_allocate_slot_on_missing = 1` 自动分配，**无需** `#PoolMergedSkeletonRW[$instance_id] == -1` 初始化块，也无需逐实例枚举）：
 ```
 if $PoolMergeStatus_{C}[$instance_id] != 2
     $\WWMIv1\vg_offset = <该组件vg_offset>
@@ -240,7 +244,7 @@ endif
 
 各组件内原有的 `$draw_component{C}` 开关判断、drawindexed 调用、纹理替换与特效（如 RabbitFX）逻辑**保持不变**，仅替换骨架合并部分与绘制判断条件。
 
-### 10. 资源池声明（随实例数增加）
+### 10. 资源池声明（随实例数增加；RW 池带自动分配与资源模板）
 
 ```
 [PoolMergedSkeleton]
@@ -257,15 +261,27 @@ pool_lazy_initialization = 0
 pool_size = 4
 pool_index_type = fifo
 pool_lazy_initialization = 0
+pool_allocate_slot_on_missing = 1
+type = RWBuffer
+format = R32G32B32A32_FLOAT
+array = 1536
+bind_flags = shader_resource unordered_access
 
 [PoolExtraMergedSkeletonRW]
 pool_size = 4
 pool_index_type = fifo
 pool_lazy_initialization = 0
+pool_allocate_slot_on_missing = 1
+type = RWBuffer
+format = R32G32B32A32_FLOAT
+array = 1536
+bind_flags = shader_resource unordered_access
 ```
-（`pool_size` = 实例数 N。）
+（`pool_size` = 实例数 N。两个 RW 池**必须**带 `pool_allocate_slot_on_missing = 1` 和资源模板 `type`/`format`/`array`/`bind_flags`：访问缺失槽位时自动分配槽位，并按模板创建 RWBuffer 供 `cs-u6 = Pool...RW[$instance_id]` 使用。）
 
-并为每个实例新增骨架缓冲（每实例各两份）：
+基底 `[ResourceMergedSkeletonRW]` / `[ResourceExtraMergedSkeletonRW]` 保留并 `array = 1536`（帧末基底 copy 与 ShapeKey 回调仍引用 `ResourceMergedSkeleton`）。
+
+并为每个实例新增骨架缓冲（每实例各两份；新方案下命令列表已不引用这些逐实例缓冲，保留仅为与参考文件一致，可按需省略）：
 ```
 [ResourceMergedSkeleton0]
 [ResourceMergedSkeletonRW0]
@@ -280,7 +296,6 @@ format = R32G32B32A32_FLOAT
 array = 1536
 ...
 ```
-基底 `[ResourceMergedSkeletonRW]` / `[ResourceExtraMergedSkeletonRW]` 保留并 `array = 1536`。
 
 ### 11. 绘制判断条件变更
 
@@ -379,15 +394,16 @@ with open('Blend_R16.buf', 'r+b') as f:
 
 - [ ] Constants 中存在 `[PoolMergeStatus_{C}]` 池（每组件一个，`pool_size = 实例数`，`pool_variable_default_value = 0`），且无逐实例 `$merge_status_id_{C}_{N}` 变量
 - [ ] `[Constants]` 中 `global persist $draw_*` 开关块保留在原位（`$merge_status_id` 之后、`$instance_id`/池之前），`[Present]` 保留 `run = CommandListProcessToggles`
-- [ ] 存在通用 `$instance_id` 变量 + 每实例 `$instance_id_{0..N-1}` 变量
+- [ ] 存在通用 `$instance_id` 变量 + `[PoolInstanceID]` 池（`pool_size = 实例数`，`pool_index_type = fifo`，`pool_variable_default_value = 0`），且无逐实例 `$instance_id_{0..N-1}` 变量
 - [ ] 存在 `[TextureOverrideMeshDataCB]`（hash = 358d62cb，filter_index = 3380.7777）
 - [ ] 每个 `TextureOverrideComponent{C}` 都有 `$instance_id` 捕获块（vs-cb2/vs-cb3 == 3380.7777）
-- [ ] 帧末 `CommandListUpdateMergedSkeleton` 用 `PoolMergeStatus_{C}[*] = 0` 重置，并按实例 copy Pool 骨架（先 Merged 后 Extra）
-- [ ] `CommandListMergeSkeleton` 中每个实例分支都有 `$instance_id_{N} = $instance_id`，`cs-u6 = ResourceMergedSkeletonRW{N}`，pool 访问用 `[$instance_id]`
-- [ ] 每个 `TextureOverrideComponent{C}` 有 pool 槽位初始化 + 单个 `$PoolMergeStatus_{C}[$instance_id]` 合并块
+- [ ] 帧末 `CommandListUpdateMergedSkeleton` 用 `PoolMergeStatus_{C}[*] = 0` 重置，并按 `$PoolInstanceID[0..N-1]` 索引 copy Pool 骨架（先 Merged 后 Extra）
+- [ ] `CommandListMergeSkeleton` 主合并段含注册行 `$PoolInstanceID[#PoolMergedSkeletonRW[$instance_id]] = $instance_id` 与 `cs-u6 = PoolMergedSkeletonRW[$instance_id]`（Extra 段不注册，用 `PoolExtraMergedSkeletonRW[$instance_id]`），无逐实例 if/elif 分支
+- [ ] 每个 `TextureOverrideComponent{C}` 有单个 `$PoolMergeStatus_{C}[$instance_id]` 合并块，且无 pool 槽位初始化代码
 - [ ] 绘制条件为 `if #PoolMergedSkeleton[$instance_id] !== -1`
 - [ ] vb4 使用 `ResourceBlendBuffer_R16` 并带 4 条 ElementFormat + 4 条 ElementOffset
 - [ ] 4 个骨架 Pool 资源 `pool_size = 实例数`
-- [ ] 每个实例的 `ResourceMergedSkeletonRW{N}` / `ResourceExtraMergedSkeletonRW{N}` 存在
+- [ ] `[PoolMergedSkeletonRW]` / `[PoolExtraMergedSkeletonRW]` 带 `pool_allocate_slot_on_missing = 1` 和资源模板（`type = RWBuffer`、`format = R32G32B32A32_FLOAT`、`array = 1536`、`bind_flags = shader_resource unordered_access`）
+- [ ] （可选）逐实例 `ResourceMergedSkeletonRW{N}` / `ResourceExtraMergedSkeletonRW{N}` 缓冲——命令列表已不引用，可按需省略或删除
 - [ ] blend remap / 压缩骨骼相关代码已移除
 - [ ] `Meshes/Blend_R16.buf` 已生成，且 `Blend.buf` 与 `BlendRemapVertexVG.buf` 顶点数一致
