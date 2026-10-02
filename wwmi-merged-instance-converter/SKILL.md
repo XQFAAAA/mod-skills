@@ -145,8 +145,8 @@ endif
 
 `CommandListUpdateMergedSkeleton` 中重置每个组件的合并状态池（每组件一行）：
 ```
-PoolMergeStatus_0[*] = 0
-PoolMergeStatus_1[*] = 0
+$PoolMergeStatus_0[*] = 0
+$PoolMergeStatus_1[*] = 0
 ...
 ```
 `[*]` 表示将该池所有槽位重置为默认值 0。
